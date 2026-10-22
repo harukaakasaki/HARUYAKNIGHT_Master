@@ -1,0 +1,482 @@
+#include "SceneClear.h"
+#include "SceneTitle.h"
+#include "SceneMain.h"
+#include "../Systems/Game.h"
+#include "../GameObjects/Enemy.h"
+#include "../GameObjects/EnemyBat.h"
+#include "../GameObjects/EnemyMush.h"
+#include "../GameObjects/EnemyGolem.h"
+#include <DxLib.h>
+#include "../GameObjects/Player.h"
+#include "../Systems/Pad.h"
+#include "../Systems/Vec2.h"
+#include "../Systems/Camera.h"
+#include <memory>
+#include "../GameObjects/Bg.h"
+
+namespace
+{
+	constexpr float kGoalX     = 24500.0f;// ゴール位置
+	constexpr float kGoalWidth = 128.0f;  // ゴール位置幅
+	constexpr int kTreeX       = 24200;   // 桜位置X
+	constexpr int kTreeY       = 220;	  // 桜位置Y
+	constexpr int kMoveX       = 1500;	  // 移動位置X
+	constexpr int kMoveY       = 700;	  // 移動位置Y
+	constexpr int kJumpX       = 2300;	  // ジャンプ位置X
+	constexpr int kJumpY       = 700;	  // ジャンプ位置Y
+	constexpr int kAttackX     = 7000;	  // 攻撃位置X
+	constexpr int kAttackY     = 700;	  // 攻撃位置Y
+	constexpr int kTitleX      = 1300;    // Back画像位置Y
+	constexpr int kTitleY      = 300;	  // Back画像位置Y
+	constexpr float kScale     = 0.5f;	  // 画像拡大率
+
+	bool IsHitRect(const Rect& a, const Rect& b)
+	{
+		return !(a.right < b.left ||
+			a.left > b.right ||
+			a.bottom < b.top ||
+			a.top > b.bottom);
+	}
+}
+
+/// <summary>
+/// コンストラクタ
+/// </summary>
+SceneMain::SceneMain()
+{
+	m_pPlayer = new Player;
+	m_pEnemy  = new Enemy;
+	m_pCamera = new Camera;
+	m_pBg     = new Bg(m_pCamera);
+	m_bgmHandle  = LoadSoundMem("bgm/game_bgm2.mp3");              // BGM
+	m_treeHandle = LoadGraph("data/sakuratree.png");               // 桜の木画像
+	m_tutorialMoveHandle   = LoadGraph("data/tutorial_move.png");  // 移動して画像
+	m_tutorialJumpHandle   = LoadGraph("data/tutorial_jump.png");  // ジャンプして画像
+	m_tutorialAttackHandle = LoadGraph("data/tutorial_attack.png");// 攻撃して画像
+}
+
+/// <summary>
+/// デストラクタ
+/// </summary>
+SceneMain::~SceneMain()
+{
+	delete m_pPlayer;
+	delete m_pEnemy;
+	delete m_pCamera;
+	DeleteGraph(m_treeHandle);
+	DeleteGraph(m_tutorialMoveHandle);
+	DeleteGraph(m_tutorialJumpHandle);
+	DeleteGraph(m_tutorialAttackHandle);
+	StopSoundMem(m_bgmHandle);
+	DeleteSoundMem(m_bgmHandle);
+}
+
+/// <summary>
+/// 初期化
+/// </summary>
+void SceneMain::Init()
+{
+	ChangeVolumeSoundMem(180, m_bgmHandle);
+	PlaySoundMem(m_bgmHandle, DX_PLAYTYPE_LOOP);
+	m_pPlayer->Init();
+	m_pEnemy->Init();
+	m_pCamera->Init();
+
+	// コウモリ
+	std::vector<Vec2>batPosition =
+	{
+		{7000.0f,800.0f},
+		{7700.0f,700.0f},
+		{8700.0f,820.0f},
+		{9600.0f,650.0f},
+		{12500.0f,780.0f},
+		{16000.0f,700.0f},
+		{17300.0f,400.0f},
+		{18000.0f,200.0f},
+		{18500.0f,500.0f},
+		{19100.0f,800.0f},
+		{19400.0f,700.0f},
+		{19700.0f,600.0f},
+		{20000.0f,500.0f}
+	};
+	// コウモリのスポーン地点
+	for (auto& pos : batPosition)
+	{
+		auto bat = std::make_unique<EnemyBat>();
+		bat->Init();
+		bat->SetPos(pos);
+		m_enemyBats.push_back(std::move(bat));
+	}
+
+	// キノコ
+	std::vector<Vec2>mushPosition =
+	{
+		{13000.0f,805.0f},
+		{14000.0f,805.0f},
+		{14500.0f,805.0f},
+		{15500.0f,805.0f},
+		{16500.0f,805.0f},
+		{17000.0f,615.0f},
+		{17800.0f,230.0f}
+	
+	};
+
+	// キノコのスポーン地点
+	for (auto& pos : mushPosition)
+	{
+		auto mush = std::make_unique<EnemyMush>();
+		mush->Init();
+		mush->SetPos(pos);
+		m_enemyMushes.push_back(std::move(mush));
+	}
+	// ゴーレムのスポーン地点
+	std::vector<Vec2>golemPosition =
+	{
+		{22000.0f,520.0f}
+	};
+	// ゴーレムのスポーン地点
+	for (auto& pos : golemPosition)
+	{
+		auto golem = std::make_unique<EnemyGolem>();
+		golem->Init();
+		golem->SetPos(pos);
+		m_enemyGolems.push_back(std::move(golem));
+	}
+}
+
+
+
+/// <summary>
+/// 更新
+/// </summary>
+void SceneMain::Update()
+{
+	m_pPlayer->Update();
+
+	if (m_pPlayer->IsJustRespawn())
+	{
+		m_isReset = true;
+		m_pPlayer->ClearJustRespawn();
+	}
+	// Playerがヒットしたら画面が揺れる
+	if (m_pPlayer->IsDamage())
+	{
+		m_pCamera->Shake(30, 10.0f);// 揺れる強さ（時間,揺れ）
+		m_pPlayer->ClearDamage();// 元に戻す
+	}
+
+	m_pEnemy->Update();
+	for (auto& bat : m_enemyBats)
+	{
+		bat->Update();
+	}
+
+	for (auto& mush : m_enemyMushes)
+	{
+		mush->Update();
+	}
+
+	for (auto& golem : m_enemyGolems)
+	{
+		golem->Update();
+	}
+	m_pCamera->Update(*m_pPlayer);
+	m_pBg->Update();
+	// ゴールの矩形
+	Rect goalRect;
+	goalRect.left = kGoalX;
+	goalRect.right = kGoalX + kGoalWidth;
+	goalRect.top = 0.0f;
+	goalRect.bottom = 1080.0f;
+
+	Rect playerRect = m_pPlayer->GetRect();
+	Rect chipRect;
+
+	// Playerとゴールの当たり判定
+	if (IsHitRect(playerRect, goalRect))
+	{
+		m_isGoal = true;
+	}
+
+	if (m_pBg->IsCollision(playerRect, chipRect))
+	{
+		m_pPlayer->ResolveCollision(chipRect);
+	}
+
+	// プレイヤーとエネミーの当たり判定
+	CheckPlayerEnemyCollision();
+	// プレイヤーの攻撃判定
+	CheckPlayerAttackCollision();
+
+	if (m_isReset)
+	{
+		ResetEnemies();
+		m_isReset = false;
+	}
+}
+
+/// <summary>
+/// 描画
+/// </summary>
+void SceneMain::Draw()
+{
+	// カメラのポジション
+	Vec2 cameraPos;
+	cameraPos = m_pCamera->GetPos();
+	
+	// 背景の表示
+	m_pBg->Draw();
+
+	// エネミーの描画
+	m_pEnemy->Draw(*m_pCamera);
+	// コウモリの描画
+	for (auto& bat : m_enemyBats)
+	{
+		bat->Draw(*m_pCamera);
+	}
+	// キノコの描画
+	for (auto& mush : m_enemyMushes)
+	{
+		mush->Draw(*m_pCamera);
+	}
+	// ゴーレムの描画
+	for (auto& golem : m_enemyGolems)
+	{
+		golem->Draw(*m_pCamera);
+	}
+
+	// ゴール画像の描画
+	DrawGraph(
+		static_cast<int>(kTreeX - cameraPos.x),
+		static_cast<int>(kTreeY - cameraPos.y),
+		m_treeHandle, true);
+
+	// 移動して画像の描画
+	DrawRotaGraph(
+		static_cast<int>(kMoveX - cameraPos.x),
+		static_cast<int>(kMoveY - cameraPos.y),
+		kScale, 0.0,
+		m_tutorialMoveHandle, true);
+
+	// ジャンプして画像の描画
+	DrawRotaGraph(
+		static_cast<int>(kJumpX - cameraPos.x),
+		static_cast<int>(kJumpY - cameraPos.y),
+		kScale, 0.0,
+		m_tutorialJumpHandle, true);
+
+	// 攻撃して画像の描画
+	DrawRotaGraph(
+		static_cast<int>(kAttackX - cameraPos.x),
+		static_cast<int>(kAttackY - cameraPos.y),
+		kScale, 0.0,
+		m_tutorialAttackHandle, true);
+
+	// プレイヤーの描画
+	m_pPlayer->Draw(*m_pCamera);
+	m_pPlayer->DrawHP();
+
+	
+
+	
+#ifdef _DEBUG
+
+	if (Pad::IsTrigger(PAD_INPUT_8))
+	{
+		m_isGoal = true;
+	}
+
+	int drawX = static_cast<int>(kGoalX - cameraPos.x);
+	DrawBox(drawX, 0, drawX + kGoalWidth, 1080, GetColor(255, 255, 0), false);
+	// クリアシーンができたら#ifdefに移動
+	if (m_isGoal)
+	{
+		DrawString(drawX - 10, 200, "クリア！！！", GetColor(255, 255, 0));
+	}
+	if (m_isHitPlayer)
+	{
+		DrawString(800, 300, "当たってる", GetColor(255, 0, 0));
+	}
+
+#endif
+}
+
+// 画面を止める（ヒットストップ）
+void SceneMain::HitStop(int frame)
+{
+	m_hitStopFrame = frame;
+}
+bool SceneMain::IshitStop() const
+{
+	return m_hitStopFrame > 0;
+}
+
+// 次のシーンに遷移する
+bool SceneMain::IsEnd() const
+{
+	return m_isGoal;
+}
+Scene* SceneMain::GetNextScene()
+{
+	return new SceneClear();
+}
+
+// プレイヤーとエネミーの当たり判定
+void SceneMain::CheckPlayerEnemyCollision()
+{
+	Rect playerBox = m_pPlayer->PlayerHitBox();
+
+	// コウモリ
+	for (auto& bat : m_enemyBats)
+	{
+		if (!bat->IsAlive())continue;
+
+		if (IsHitRect(playerBox, bat->EnemyBatHitBox()))
+		{
+			float dir = (m_pPlayer->GetPos().x < bat->GetPos().x)
+				? -1.0f
+				: 1.0f;
+			m_pPlayer->Damage(dir);
+
+			HitStop(3);
+		}
+	}
+
+	// キノコ
+	for (auto& mush : m_enemyMushes)
+	{
+		
+
+		if (IsHitRect(playerBox, mush->EnemyMushHitBox()))
+		{
+			if (!mush->IsAlive())continue;
+			float dir = (m_pPlayer->GetPos().x < mush->GetPos().x)
+				? -1.0f
+				: 1.0f;
+			m_pPlayer->Damage(dir);
+
+			HitStop(3);
+		}
+		
+	}
+
+	// ゴーレム
+	for (auto& golem : m_enemyGolems)
+	{
+		if (!golem->IsAlive())continue;
+
+		if (IsHitRect(playerBox, golem->EnemyGolemHitBox()))
+		{
+			float dir = (m_pPlayer->GetPos().x < golem->GetPos().x)
+				? -1.0f
+				: 1.0f;
+			m_pPlayer->Damage(dir);
+
+			HitStop(3);
+		}
+	}
+
+}
+
+// プレイヤーの攻撃とエネミーの当たり判定
+void SceneMain::CheckPlayerAttackCollision()
+{
+	if (!m_pPlayer->IsAttackHitActive())return;
+
+	Rect attackBox = m_pPlayer->AttackHitBox();
+
+	// コウモリ
+	for (auto& bat : m_enemyBats)
+	{
+		if (!bat->IsAlive())continue;
+		if (IsHitRect(attackBox, bat->EnemyBatHitBox()))
+		{
+			bat->Damage(); // Enemy
+			HitStop(3);
+		}
+	}
+
+	// キノコ
+	for (auto& mush : m_enemyMushes)
+	{
+		if (!mush->IsAlive())continue;
+		if (IsHitRect(attackBox, mush->EnemyMushHitBox()))
+		{
+			mush->Damage(); // Enemy
+			HitStop(3);
+		}
+	}
+
+	// ゴーレム
+	for (auto& golem : m_enemyGolems)
+	{
+		if (!golem->IsAlive())continue;
+		if (IsHitRect(attackBox, golem->EnemyGolemHitBox()))
+		{
+			golem->Damage(); // Enemy
+			HitStop(3);
+		}
+	}
+}
+
+// エネミーのポジションのリセット
+void SceneMain::ResetEnemies()
+{
+	m_enemyBats.clear();
+	m_enemyMushes.clear();
+	m_enemyGolems.clear();
+	// コウモリのリセット位置
+	std::vector<Vec2>batPosition =
+	{
+		{7000.0f,800.0f},
+		{7700.0f,700.0f},
+		{8700.0f,820.0f},
+		{9600.0f,650.0f},
+		{12500.0f,780.0f},
+		{16000.0f,700.0f},
+		{17300.0f,400.0f},
+		{18000.0f,200.0f},
+		{18500.0f,500.0f},
+		{19100.0f,800.0f},
+		{19400.0f,700.0f},
+		{19700.0f,600.0f},
+		{20000.0f,500.0f}
+	};
+	for (auto& pos : batPosition)
+	{
+		auto bat = std::make_unique<EnemyBat>();
+		bat->Init();
+		bat->SetPos(pos);
+		m_enemyBats.push_back(std::move(bat));
+	}
+	// キノコのリセット位置
+	std::vector<Vec2>mushPosition =
+	{
+		{13000.0f,805.0f},
+		{14000.0f,805.0f},
+		{14500.0f,805.0f},
+		{15500.0f,805.0f},
+		{16500.0f,805.0f},
+		{17000.0f,615.0f},
+		{17800.0f,230.0f}
+	};
+	for (auto& pos : mushPosition)
+	{
+		auto mush = std::make_unique<EnemyMush>();
+		mush->Init();
+		mush->SetPos(pos);
+		m_enemyMushes.push_back(std::move(mush));
+	}
+	// ゴーレムのリセット位置
+	std::vector<Vec2>golemPosition =
+	{
+		{22000.0f,520.0f}
+	};
+	for (auto& pos : golemPosition)
+	{
+		auto golem = std::make_unique<EnemyGolem>();
+		golem->Init();
+		golem->SetPos(pos);
+		m_enemyGolems.push_back(std::move(golem));
+	}
+}

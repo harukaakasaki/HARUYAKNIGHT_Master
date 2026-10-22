@@ -1,0 +1,210 @@
+#include "EnemyBat.h"
+#include "Character.h"
+#include <DxLib.h>
+
+namespace
+{
+	constexpr int kIdleAnimNum    = 9;    // コウモリのIdleアニメーション
+	constexpr int kAnimWaitFrame  = 1;    // ↑ 1コマ当たりのフレーム数
+	constexpr int kGraphicsAngle  = 0;    // グラフィックアングル
+	constexpr int kGraphWidth     = 64;   // コウモリのグラフィックサイズ（幅）
+	constexpr int kGraphHeight    = 64;   // コウモリのグラフィックサイズ（高さ）
+	constexpr int kSpeed          = 3;    // コウモリのスピード
+	constexpr int kAnimSpeed      = 3;    // コウモリのアニメーションスピード
+	constexpr int kMoveTime       = 100;  // コウモリの移動時間
+	constexpr float kGraphicsSize = 3.0f; // グラフィックサイズ
+	constexpr float kNormalFrame  = 9.0f; // 通常アニメーションフレーム
+	constexpr float kDeathFrame   = 12.0f;// 死アニメーションフレーム
+	constexpr float kEffectFrame  = 12.0f;// エフェクトアニメーションフレーム
+	
+}
+
+EnemyBat::EnemyBat():
+	m_animFrame(0),
+	m_animCount(0)
+{
+	// 画像
+	m_handle       = LoadGraph("data/bat.png");         // 通常画像
+	m_deathHandle  = LoadGraph("data/bat_death2.png");  // 死画像
+	m_effectHandle = LoadGraph("data/explosion1.png");  // エフェクト画像
+	// SE
+	m_hitSe    = LoadSoundMem("bgm/enemy_death_se.mp3");// 死SE
+	m_effectSe = LoadSoundMem("bgm/boom_se.mp3");       // エフェクトSE
+}
+
+EnemyBat::~EnemyBat()
+{
+	DeleteGraph(m_handle);
+	DeleteGraph(m_deathHandle);
+	DeleteGraph(m_effectHandle);
+	DeleteSoundMem(m_hitSe);
+	DeleteSoundMem(m_effectSe);
+}
+
+void EnemyBat::Init()
+{
+	m_state = BatState::Normal;
+	m_pos = { 100.0f,400.0f };
+	m_hp = 1;
+	m_isAlive = true;
+}
+
+void EnemyBat::Update()
+{
+	UpdateState();
+
+	if (!m_isAlive)return;
+
+	if (m_state == BatState::Death)return;
+	if (m_state == BatState::DeathEffect)return;
+
+	Character::Update();
+	m_moveTimer++;
+	
+	if (m_moveTimer >= kMoveTime)
+	{
+		m_moveLeft = !m_moveLeft;
+		m_moveTimer = 0;
+	}
+	if(m_moveLeft)
+	{
+		m_pos.x -= kSpeed;
+		m_isRight = true;
+	}
+	else
+	{
+		m_pos.x += kSpeed;
+		m_isRight = false;
+	}
+
+	
+}
+// 状態の更新
+void EnemyBat::UpdateState()
+{
+	m_animCount++;
+
+	if (m_animCount > kAnimSpeed)// アニメーションスピード
+	{
+		m_animCount = 0;// はじめに戻す
+		m_animFrame++;  // 次のコマへ
+	}
+
+	if (m_state == BatState::Normal)
+	{
+		if (m_animFrame >= kNormalFrame)// 通常
+		{
+			m_animFrame = 0;
+
+		}
+	}
+	if (m_state == BatState::Death)
+	{
+		if (m_animFrame >= kDeathFrame)// 死
+		{
+			PlaySoundMem(m_effectSe, DX_PLAYTYPE_BACK);
+			m_state = BatState::DeathEffect;
+			m_animFrame = 0;
+
+		}	
+	}
+	if (m_state == BatState::DeathEffect)
+	{
+		
+		if (m_animFrame >= kEffectFrame)// 死エフェクト
+		{
+			
+			Kill();
+			m_animFrame = 0;
+		}
+		
+	}
+}
+// 描画
+void EnemyBat::Draw(const Camera& camera)
+{
+	// コウモリが死んでいたら何もしない
+	if (!m_isAlive)return;
+
+	Vec2 cam = camera.GetPos();
+
+	// アニメーションのフレーム数から表示したいコマ番号
+	int animNo = m_animFrame;
+	// アニメーションの進行に合わせてグラフィックを切り取る
+	int srcX = kGraphWidth * animNo;
+	int srcY = 0;
+
+	int w = kGraphWidth * kGraphicsSize;
+	int h = kGraphHeight * kGraphicsSize;
+
+
+	if (m_state == BatState::Normal)
+	{
+		DrawRectRotaGraph(static_cast<int>(m_pos.x - cam.x),
+			static_cast<int>(m_pos.y - cam.y),//-35は地面への位置調整
+			srcX, srcY,
+			kGraphWidth, kGraphHeight, kGraphicsSize, kGraphicsAngle,
+			m_handle, true, !m_isRight);
+	}
+
+	if (m_state == BatState::Death)
+	{
+		DrawRectRotaGraph(static_cast<int>(m_pos.x - cam.x),
+			static_cast<int>(m_pos.y - cam.y),
+			srcX, srcY,
+			kGraphWidth, kGraphHeight, kGraphicsSize, kGraphicsAngle,
+			m_deathHandle, true, !m_isRight);
+	}
+
+	if (m_state == BatState::DeathEffect)
+	{
+		DrawRectRotaGraph(static_cast<int>(m_pos.x - cam.x),
+			static_cast<int>(m_pos.y - cam.y),
+			srcX, srcY,
+			kGraphWidth, kGraphHeight, kGraphicsSize, kGraphicsAngle,
+			m_effectHandle, true, !m_isRight);
+	}
+
+#ifdef _DEBUG
+	// 当たり判定（コウモリ）の描画
+	DrawBox(static_cast<int>(m_pos.x - cam.x - w/3),
+		static_cast<int>(m_pos.y - cam.y - 35 - h/10),
+		static_cast<int>(m_pos.x - cam.x + w/3),
+		static_cast<int>(m_pos.y - cam.y - 35 + h/3),
+		GetColor(255, 0, 0), false);
+#endif // DEBUG
+}
+// ダメージ判定
+void EnemyBat::Damage()
+{
+	m_hp = -1;
+
+	if (m_hp <= 0)
+	{
+		PlaySoundMem(m_hitSe, DX_PLAYTYPE_BACK);
+		m_state = BatState::Death;
+		m_animFrame = 0;
+		m_animCount = 0;
+		
+	}
+}
+// 当たり判定
+Rect EnemyBat::EnemyBatHitBox() const
+{
+	if (m_state == BatState::Death || m_state == BatState::DeathEffect)
+	{
+		return Rect{ 0,0,0,0 };
+	}
+
+	float w = kGraphWidth * kGraphicsSize;
+	float h = kGraphHeight * kGraphicsSize;
+
+	Rect r;
+	r.left = m_pos.x - w / 3;
+	r.top = m_pos.y - 35 - h / 10;
+	r.right = m_pos.x + w / 3;
+	r.bottom = m_pos.y - 35 + h / 3;
+
+	return r;
+}
+
